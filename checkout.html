@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Checkout</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+</head>
+
+
+<body>
+
+    <h1>Order Checkout</h1>
+
+    <!-- Order Summary -->
+    <div id="order-summary">
+        <h2>Your Items</h2>
+        <ul id="summary-list"></ul>
+        <h3>Total: $<span id="summary-total"></span></h3>
+    </div>
+
+    <!-- Customer Information Form -->
+    <h2>Enter Your Information</h2>
+
+    <form id="checkout-form">
+
+        <label>Name:</label>
+        <input type="text" placeholder="anonymous" id="cust-name" required><br>
+
+        <label>Email:</label>
+        <input type="email" placeholder="anonymous@email.com" id="cust-email" required><br>
+
+        <label>Shipping Address:</label>
+        <input type="text" id="cust-address" required><br>
+
+        <label>City:</label>
+        <input type="text" placeholder="Aiken" id="cust-city" required><br>
+
+        <label>State:</label>
+        <input type="text" placeholder="SC" id="cust-state" required><br>
+
+        <label>Zip Code:</label>
+        <input type="text" placeholder="12345" id="cust-zip" required><br>
+
+        <label>Card Number:</label>
+        <input type="text" placeholder="1234 5678 9012" id="cust-card" required><br>
+
+        <label>Expiration Date:</label>
+        <input type="text" placeholder="MM/YY" id="cust-exp" required><br>
+
+        <label>CVC:</label>
+        <input type="text" placeholder="123" id="cust-cvc" required><br>
+
+        <button type="submit">Confirm Purchase</button>
+
+    </form>
+
+    <script>
+        var firebaseConfig = {
+            apiKey: "AIzaSyChVXON7jbMUNS-Vw01aiGJbo3W5I4gbdg",
+            authDomain: "database225-bb4c5.firebaseapp.com",
+            projectId: "database225-bb4c5",
+            storageBucket: "database225-bb4c5.firebasestorage.app",
+            messagingSenderId: "762745872631",
+            appId: "1:762745872631:web:a3ea5da407abd42df8b3f2"
+        };
+
+        var db = null;
+
+        if (typeof firebase !== "undefined") {
+            if (!firebase.apps || !firebase.apps.length) {
+                firebase.initializeApp(firebaseConfig);
+            }
+            if (firebase.firestore) {
+                db = firebase.firestore();
+            }
+        }
+
+        // Get cart data from main page
+
+        //turns string back to object
+        var storedCart = localStorage.getItem("cartData");
+        var cartData = storedCart ? JSON.parse(storedCart) : {};
+
+        var total = localStorage.getItem("cartTotal") || 0;
+
+        var summaryList = document.getElementById("summary-list");
+
+        var totalDisplay = document.getElementById("summary-total");
+
+        totalDisplay.textContent = total;
+
+        // Display items
+        for (var item in cartData) {
+
+            var li = document.createElement("li");
+
+            li.textContent = item + " (" + cartData[item].qty + ") — $" + cartData[item].subtotal;
+
+            summaryList.appendChild(li);
+
+        }
+
+        function updateInventoryFromOrder() {
+            var localInventory = null;
+            var storedInventory = localStorage.getItem("productInventory");
+            if (storedInventory) {
+                try {
+                    localInventory = JSON.parse(storedInventory);
+                } catch (e) {
+                    localInventory = null;
+                }
+            }
+
+            if (!db || !db.collection) {
+                if (!localInventory) {
+                    return;
+                }
+                for (var item in cartData) {
+                    if (localInventory[item] !== undefined) {
+                        localInventory[item] = localInventory[item] - cartData[item].qty;
+                        if (localInventory[item] < 0) {
+                            localInventory[item] = 0;
+                        }
+                    }
+                }
+                localStorage.setItem("productInventory", JSON.stringify(localInventory));
+                return;
+            }
+
+            var inventoryRef = db.collection("inventory").doc("global");
+
+            return db.runTransaction(function (transaction) {
+                return transaction.get(inventoryRef).then(function (doc) {
+                    var serverInventory = doc.exists ? doc.data() : {};
+
+                    for (var item in cartData) {
+                        if (serverInventory[item] === undefined) {
+                            var startValue = 100;
+                            if (localInventory && typeof localInventory[item] === "number") {
+                                startValue = localInventory[item];
+                            }
+                            serverInventory[item] = startValue;
+                        }
+                        serverInventory[item] = serverInventory[item] - cartData[item].qty;
+                        if (serverInventory[item] < 0) {
+                            serverInventory[item] = 0;
+                        }
+                    }
+
+                    transaction.set(inventoryRef, serverInventory);
+                    return serverInventory;
+                });
+            }).then(function (serverInventory) {
+                localStorage.setItem("productInventory", JSON.stringify(serverInventory));
+            });
+        }
+
+
+
+        // Handle submission, thanks for the order, sends to home page
+        document.getElementById("checkout-form").addEventListener("submit", function (e) {
+
+            e.preventDefault();
+
+            var orderData = {
+                "cust-name": document.getElementById("cust-name").value,
+                "cust-email": document.getElementById("cust-email").value,
+                "cust-address": document.getElementById("cust-address").value,
+                "cust-city": document.getElementById("cust-city").value,
+                "cust-state": document.getElementById("cust-state").value,
+                "cust-zip": document.getElementById("cust-zip").value,
+                "cust-card": document.getElementById("cust-card").value,
+                "cust-exp": document.getElementById("cust-exp").value,
+                "items": cartData,
+                "total": total
+            };
+
+            if (db) {
+                db.collection("orders").add(orderData).then(function () {
+
+                    var updateResult = updateInventoryFromOrder();
+
+                    if (updateResult && typeof updateResult.then === "function") {
+                        updateResult.then(function () {
+                            alert("Order Confirmed! Thank you for shopping with FitFish");
+
+                            localStorage.removeItem("cartData");
+                            localStorage.removeItem("cartTotal");
+
+                            window.location.href = "main.html";
+                        });
+                    } else {
+                        alert("Order Confirmed! Thank you for shopping with FitFish");
+
+                        localStorage.removeItem("cartData");
+                        localStorage.removeItem("cartTotal");
+
+                        window.location.href = "main.html";
+                    }
+
+                }).catch(function (error) {
+
+                    console.error(error);
+
+                    var updateResult = updateInventoryFromOrder();
+
+                    if (updateResult && typeof updateResult.then === "function") {
+                        updateResult.then(function () {
+                            alert("There was a problem sending your order to Firebase, but it was still submitted.");
+
+                            localStorage.removeItem("cartData");
+                            localStorage.removeItem("cartTotal");
+
+                            window.location.href = "main.html";
+                        });
+                    } else {
+                        alert("There was a problem sending your order to Firebase, but it was still submitted.");
+
+                        localStorage.removeItem("cartData");
+                        localStorage.removeItem("cartTotal");
+
+                        window.location.href = "main.html";
+                    }
+
+                });
+
+            } else {
+
+                updateInventoryFromOrder();
+
+                alert("Order Confirmed! Thank you for shopping with FitFish");
+
+                localStorage.removeItem("cartData");
+                localStorage.removeItem("cartTotal");
+
+                window.location.href = "main.html";
+
+            }
+
+
+        });
+    </script>
+
+
+
+
+
+
+</body>
+
+</html>
